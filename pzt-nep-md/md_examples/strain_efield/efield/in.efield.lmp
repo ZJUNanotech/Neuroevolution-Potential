@@ -1,0 +1,93 @@
+variable project_name index PZT_0p50
+variable T1 equal 200 # Kelvin
+variable T2 equal 300 # Kelvin
+variable T3 equal 400 # Kelvin
+variable dt equal 0.001 # ps,1fs
+variable p equal 1 # bar
+
+variable d1 equal 1000 # thermo interval
+variable d2 equal 10000 # dump interval
+variable d3 equal 100000 # restart interval
+variable Tdamp equal 100.0*${dt} 
+variable Pdamp equal 1000.0*${dt}
+
+# 电场参数
+variable E_poling equal 0.005      # 500 KV/cm = 0.005 V/埃
+variable E_step equal 0.0005       # 50 KV/cm/步,文献用的50KV/cm
+variable E_max equal 0.005        # 500 KV/cm,不能大于极化电场
+variable E_min equal -0.001	   # 100 KV/cm,不能大于矫顽电场，因为会退极化
+
+# Input Script LAMMPS
+# ------------------------ INITIALIZATION -----------------------------------------------
+units metal
+dimension 3
+boundary p p p
+atom_style atomic
+# ------------------------ ATOMS DEFINITION -----------------------------------------------
+fix charge all property/atom q ghost yes
+read_data relax_300.lmp fix charge NULL charge 
+change_box all triclinic
+neighbor 2.0 bin
+neigh_modify every 1 delay 0 check yes page 100000 one 2000 # default
+comm_modify vel yes
+# ------------------------ FORCE FIELD ---------------------------------------------
+set type 1 charge 7.06		# Ti
+set type 2 charge 5.85		# Zr
+set type 3 charge 3.901  	# Pb
+set type 4 charge -3.452 	# O
+
+pair_style nep 
+pair_coeff * * ./nep.txt Ti Zr Pb O 
+#------------------------- INITIAL SETTING ------------------------------------------
+timestep ${dt}
+thermo ${d1}
+# ------------------------- THERMALIZATION ----------------------------------------------
+dump 1 all custom ${d2} init.lammpstrj id type element xs ys zs # 500KV/cm下平衡
+dump_modify 1 element Ti Zr Pb O # mass order
+dump_modify 1 sort id
+# relax
+fix ELF all efield 0 0 ${E_poling}
+fix 1 all npt temp ${T2} ${T2} ${Tdamp} tri $p $p ${Pdamp}
+run 50000 # 平衡50ps
+write_restart efield_init
+
+unfix ELF
+run 50000 # 平衡50ps
+write_restart relax_init
+undump 1
+unfix 1
+# ------------------------- LOOP FOR D33/D31 ----------------------------------------------
+reset_timestep 0
+
+# 应变参数,弛豫完之后再定义
+variable lz0 equal lz
+variable tmp_lz0 equal ${lz0} # 这一步将当前瞬间的值固化给 tmp_lz0
+variable lx0 equal lx
+variable tmp_lx0 equal ${lx0}
+variable ly0 equal ly
+variable tmp_ly0 equal ${ly0}
+variable strain_33 equal (lz-v_tmp_lz0)/v_tmp_lz0
+variable strain_31 equal (lx-v_tmp_lx0)/v_tmp_lx0
+variable strain_32 equal (ly-v_tmp_ly0)/v_tmp_ly0
+# The option defaults are mode = scalar, ave = one, start = 0, 有初始值的
+fix strain_ave all ave/time 1000 10 20000 v_strain_33 v_strain_31 v_strain_32 start 0 file strain_ave.txt
+fix strain all ave/time 20000 1 20000 v_strain_33 v_strain_31 v_strain_32 start 0 file strain.txt
+
+dump 4 all custom ${d1} strain_efield.lammpstrj id type element xs ys zs 
+dump_modify 4 element Ti Zr Pb O # mass order
+dump_modify 4 sort id
+
+# case 1：0-500KV/cm,0.005V/埃,interval：50KV/cm-0.0005V/埃
+variable a loop 10
+label loop
+variable amp equal v_a*0.0005
+fix ELF all efield 0 0 v_amp
+fix 4 all npt temp ${T2} ${T2} ${Tdamp} tri $p $p ${Pdamp}
+run 20000 # 应变浮动大，多弛豫一会儿
+unfix ELF
+unfix 4
+next a 
+jump SELF loop
+unfix strain_ave
+unfix strain
+undump 4
