@@ -1,0 +1,118 @@
+variable project_name index PZT
+variable T equal 800 # Kelvin
+variable dt equal 0.0005 # ps
+variable p equal 1 # bar
+
+variable d1 equal 1000 # dump interval
+variable d2 equal 10000 # thermo interval
+variable d3 equal 100000 # restart interval
+variable Tdamp equal 100.0*${dt} 
+variable Pdamp equal 1000.0*${dt}
+# Input Script LAMMPS
+# ------------------------ INITIALIZATION -----------------------------------------------
+units metal
+dimension 3
+boundary p p p
+atom_style atomic
+read_data Ti_0p50.lmp
+change_box all triclinic
+neighbor 2.0 bin
+neigh_modify every 1 delay 0 check yes page 100000 one 2000 # default
+comm_modify vel yes
+# ------------------------ FORCE FIELD ---------------------------------------------
+pair_style nep 
+pair_coeff * * ./nep.txt Ti Zr Pb O 
+#------------------------- INITIAL SETTING ------------------------------------------
+timestep ${dt}
+thermo ${d2}
+thermo_style custom step temp etotal pe ke vol xlo xhi ylo yhi zlo zhi xy xz yz press pxx pyy pzz pyz pxz pxy
+
+velocity all set 0 0 0
+velocity all create 800 4928459 mom yes rot yes dist gaussian
+run 0
+velocity all scale 800 
+
+fix 1 all nve
+run 10000
+unfix 1
+minimize 1.0e-8 1.0e-8 500000 500000
+write_restart restart_mini
+reset_timestep 0
+
+variable la equal cella
+variable lb equal cellb
+variable lc equal cellc
+variable alpha equal cellalpha
+variable beta equal cellbeta
+variable gamma equal cellgamma
+# ------------------------- THERMALIZATION ----------------------------------------------
+# output 
+dump 1 all custom ${d1} nep_1.lammpstrj id type element xs ys zs 
+dump_modify 1 element Ti Zr Pb O 
+dump_modify 1 sort id
+# step 1:800-600
+variable a loop 4
+label loop1_start
+variable Ts equal $T-(v_a-1)*50
+variable Te equal ${Ts}-50
+fix 2 all npt temp ${Ts} ${Ts} ${Tdamp} tri $p $p ${Pdamp}
+run 100000 
+write_restart relax_${Ts}
+unfix 2
+# cool
+fix 3 all npt temp ${Ts} ${Te} ${Tdamp} tri $p $p ${Pdamp}
+run 100000 #1K/ps
+write_restart relax_${Ts}_${Te}
+unfix 3
+next a 
+jump SELF loop1_start
+undump 1
+
+# output 
+dump 2 all custom ${d1} nep_2.lammpstrj id type element xs ys zs 
+dump_modify 2 element Ti Zr Pb O 
+dump_modify 2 sort id
+# step 2:600-300
+variable b loop 15
+label loop2_start
+variable Ts equal 600-(v_b-1)*20
+variable Te equal ${Ts}-20
+fix 4 all npt temp ${Ts} ${Ts} ${Tdamp} tri $p $p ${Pdamp}
+run 200000 # 100ps
+write_restart relax_${Ts}
+unfix 4
+# cool
+fix 5 all npt temp ${Ts} ${Te} ${Tdamp} tri $p $p ${Pdamp}
+run 40000 # 1K/ps
+write_restart relax_${Ts}_${Te}
+unfix 5
+next b
+jump SELF loop2_start
+undump 2
+
+# output 
+dump 3 all custom ${d1} nep_3.lammpstrj id type element xs ys zs 
+dump_modify 3 element Ti Zr Pb O 
+dump_modify 3 sort id
+# step 3:300-50
+variable c loop 5
+label loop3_start
+variable Ts equal 300-(v_c-1)*50
+variable Te equal ${Ts}-50
+fix 6 all npt temp ${Ts} ${Ts} ${Tdamp} tri $p $p ${Pdamp}
+run 100000 
+write_restart relax_${Ts}
+unfix 6
+# cool
+fix 7 all npt temp ${Ts} ${Te} ${Tdamp} tri $p $p ${Pdamp}
+run 100000 #1K/ps
+write_restart relax_${Ts}_${Te}
+unfix 7
+next c
+jump SELF loop3_start
+
+fix 8 all npt temp ${Te} ${Te} ${Tdamp} tri $p $p ${Pdamp}
+run 100000 
+write_restart relax_${Te}
+unfix 8
+undump 3

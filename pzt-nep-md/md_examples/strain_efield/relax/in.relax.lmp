@@ -1,0 +1,59 @@
+variable project_name index PZT_0p50
+variable T1 equal 200 # Kelvin
+variable T2 equal 300 # Kelvin
+variable T3 equal 400 # Kelvin
+variable dt equal 0.001 # ps,1fs
+variable p equal 1 # bar
+
+variable d1 equal 1000 # thermo interval
+variable d2 equal 10000 # dump interval
+variable d3 equal 100000 # restart interval
+variable Tdamp equal 100.0*${dt} 
+variable Pdamp equal 1000.0*${dt}
+
+# 电场参数
+variable E_poling equal 0.005      # 500 KV/cm = 0.005 V/埃
+variable E_step equal 0.0005       # 50 KV/cm/步,文献用的50KV/cm
+variable E_max equal 0.005        # 500 KV/cm,不能大于极化电场
+variable E_min equal -0.001	   # 100 KV/cm,不能大于矫顽电场，因为会退极化
+
+# Input Script LAMMPS
+# ------------------------ INITIALIZATION -----------------------------------------------
+units metal
+dimension 3
+boundary p p p
+atom_style atomic
+# ------------------------ ATOMS DEFINITION -----------------------------------------------
+read_data ${project_name}_20.lmp
+change_box all triclinic
+neighbor 2.0 bin
+neigh_modify every 1 delay 0 check yes page 100000 one 2000 # default
+comm_modify vel yes
+# ------------------------ FORCE FIELD ---------------------------------------------
+pair_style nep 
+pair_coeff * * ./nep.txt Ti Zr Pb O 
+#------------------------- INITIAL SETTING ------------------------------------------
+timestep ${dt}
+thermo ${d1}
+
+velocity all set 0 0 0
+velocity all create ${T2} 4928459 mom yes rot yes dist gaussian
+run 0
+velocity all scale ${T2} 
+
+fix init all nve
+run 10000
+unfix init
+minimize 1.0e-8 1.0e-8 500000 500000
+write_restart restart_mini
+reset_timestep 0
+# ------------------------- THERMALIZATION ----------------------------------------------
+dump 0 all custom ${d2} relax_${T2}.lammpstrj id type element xs ys zs # 300K下平衡
+dump_modify 0 element Ti Zr Pb O # mass order
+dump_modify 0 sort id
+# relax
+fix 0 all npt temp ${T2} ${T2} ${Tdamp} tri $p $p ${Pdamp}
+run 100000 # 平衡100ps
+write_data relax_${T2}.lmp
+undump 0
+unfix 0
